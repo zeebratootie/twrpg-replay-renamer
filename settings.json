@@ -1,0 +1,7 @@
+{
+  "player_name": "crucibles",
+  "source_folder": "C:/Users/Admin/Documents/Warcraft III/Replay",
+  "output_folder": "C:/Users/Admin/Desktop/test-replay-output",
+  "parser_url": "http://localhost:3000",
+  "batch_size": "50"
+}

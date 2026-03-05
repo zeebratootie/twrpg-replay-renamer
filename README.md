@@ -13,13 +13,13 @@ A Windows desktop application for batch processing Warcraft 3 replay files (.w3g
 - **Settings Persistence**: Saves your settings between sessions
 - **Parser Integration**: Connects to your replay parser at localhost:3000
 
-## � Installation
+## Installation
 
 **Just want to use the app?** → Download `ReplayBatchProcessor.exe` from the [Releases](https://github.com/zeebratootie/twrpg-replay-renamer/releases) page and double-click it. No installation needed!
 
 **Want to modify the code?** → See the Quick Start options below for building from source.
 
-## �🚀 Quick Start (Choose One)
+##�🚀 Quick Start (Choose One)
 
 ### Option 1: Download Release Executable ⭐ (EASIEST)
 **No installation required - just download and run:**

@@ -16,6 +16,35 @@ import re
 import argparse
 import shutil
 
+# Maps short in-game load-codes (typed via -l/-load/-save) and class shorthands
+# to their full TWRPG class display names. Entries not present here - including
+# already-resolved hero classes like "Arcane Mage" - pass through unchanged.
+# Canonical names come from twrpg-info/heros.json (heroClass).
+CLASS_DISPLAY_NAMES = {
+    'merch': 'Merchant',
+    'am': 'Arcane Mage',
+    'fm': 'Fire Mage',
+    'lm': 'Lightning Mage',
+    'wm': 'Water Mage',
+    'wim': 'Wind Mage',
+    'mage': 'Mage',
+    'pal': 'Paladin',
+    'pala': 'Paladin',
+    'paladin': 'Paladin',
+    'cpal': 'Paladin',
+    'crusader': 'Crusader',
+    'kn': 'Knight',
+    'knight': 'Knight',
+    'th': 'Thunderer',
+    'ele': 'Elementalist',
+    'ss': 'Sword Saint',
+    'se': 'Sword Enchanter',
+    'bm': 'Bow Master',
+    'witch': 'Witch',
+    'sniper': 'Sniper',
+    'priest': 'Priest',
+}
+
 class ReplayRenamer:
     # Game-action / transaction pseudo-items that appear in loot data but are not
     # real item drops. Excluded from generated filenames.
@@ -158,13 +187,16 @@ class ReplayRenamer:
         # Now remove any trailing letters that are NOT part of common class names
         # by finding the longest known class prefix
         known_prefixes = ['merch', 'knight', 'druid', 'th', 'am', 'bm', 'dd', 'ud', 'wim', 'cpal', 'paladin', 'demon', 'mage']
-        
+
+        matched = base
         for prefix in sorted(known_prefixes, key=len, reverse=True):
             if base.startswith(prefix):
-                return prefix
-        
-        # If no known prefix found, just return what we have (fallback)
-        return base if base else class_name.lower()
+                matched = prefix
+                break
+        matched = matched if matched else class_name.lower()
+        # Convert short load-codes (e.g. 'merch', 'cpal') to full class names.
+        # Unmapped codes pass through unchanged.
+        return CLASS_DISPLAY_NAMES.get(matched, matched)
     
     def _get_hero_class(self, parsed_data, player_name):
         """Class derived from the hero the player actually used in-game.

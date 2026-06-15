@@ -626,8 +626,8 @@ class ReplayBatchProcessorGUI:
     def __init__(self, root, config_manager: ConfigManager):
         self.root = root
         self.root.title("Replay Batch Processor")
-        self.root.geometry("720x960")
-        self.root.minsize(680, 720)
+        self.root.geometry("720x820")
+        self.root.minsize(680, 700)
         self.root.resizable(True, True)
         self.root.configure(bg=self.BG)
 
@@ -727,6 +727,12 @@ class ReplayBatchProcessorGUI:
             row=current_row, column=1, sticky=(tk.W, tk.E), padx=5)
         ttk.Button(main_frame, text="Browse...",
                    command=self.browse_source_folder).grid(row=current_row, column=2, padx=5)
+        current_row += 1
+
+        self.recursive_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(main_frame, text="Search subfolders (recursive)",
+                        variable=self.recursive_var).grid(
+            row=current_row, column=1, sticky=tk.W, pady=(0, 2))
         current_row += 1
 
         ttk.Label(main_frame, text="Output Folder:", font=("Arial", 10)).grid(
@@ -877,6 +883,9 @@ class ReplayBatchProcessorGUI:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
+        # Let the log row absorb all extra vertical space so there is no dead
+        # gap below the Processing Log when the window is tall.
+        main_frame.rowconfigure(current_row, weight=1)
 
     def log_message(self, message, end="\n"):
         self.log_text.insert(tk.END, message + end)
@@ -1042,7 +1051,11 @@ class ReplayBatchProcessorGUI:
                 self.log_message("Date Filter: Disabled (processing all files)")
 
             source_path = Path(source_folder)
-            replay_files = sorted(list(source_path.glob("*.w3g")))
+            recursive = self.recursive_var.get()
+            pattern_glob = source_path.rglob if recursive else source_path.glob
+            replay_files = sorted(list(pattern_glob("*.w3g")))
+            if recursive:
+                self.log_message("Searching subfolders (recursive)")
 
             if not replay_files:
                 self.log_message("\nNo .w3g files found in source folder")
@@ -1238,6 +1251,7 @@ class ReplayBatchProcessorGUI:
         self.config.set('date_from', self.date_from_var.get())
         self.config.set('date_to', self.date_to_var.get())
         self.config.set('all_dates', str(self.all_dates_var.get()))
+        self.config.set('recursive', str(self.recursive_var.get()))
 
     def _list_player_profiles(self):
         """Return {display_name: Path} for every .ini profile in the config dir."""
@@ -1344,6 +1358,7 @@ class ReplayBatchProcessorGUI:
 
             # "All dates" toggle (disables the date inputs when on)
             self.all_dates_var.set(self.config.get_bool('all_dates', default=False))
+            self.recursive_var.set(self.config.get_bool('recursive', default=True))
             self._toggle_date_inputs()
 
             logging.info("Loaded settings from active profile")

@@ -19,7 +19,7 @@ A Windows desktop application for batch processing Warcraft 3 replay files (.w3g
 
 **Want to modify the code?** → See the Quick Start options below for building from source.
 
-##�🚀 Quick Start (Choose One)
+## 🚀 Quick Start (Choose One)
 
 ### Option 1: Download Release Executable ⭐ (EASIEST)
 **No installation required - just download and run:**

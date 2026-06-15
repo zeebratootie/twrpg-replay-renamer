@@ -17,6 +17,14 @@ import argparse
 import shutil
 
 class ReplayRenamer:
+    # Game-action / transaction pseudo-items that appear in loot data but are not
+    # real item drops. Excluded from generated filenames.
+    NOISE_PREFIXES = ('wish', 'ticket', 'trade ', 'exchange ', 'purchase ',
+                      'destroy ', 'forfeit', 'sacrifice', 'super reverse',
+                      'change difficulty')
+    NOISE_EXACT = {'craft'}
+    NOISE_CONTAINS = ('expedition', 'conversion')
+
     def __init__(self, replay_folder, parser_url="http://localhost:3000"):
         self.replay_folder = Path(replay_folder)
         self.parser_url = parser_url
@@ -49,6 +57,20 @@ class ReplayRenamer:
         """Check if file was modified in the last month - DISABLED, process all files"""
         # Always return True to process all files regardless of date
         return True
+
+    def _is_noise_item(self, name):
+        """True for blank names and game-action pseudo-items (wish, sacrifice,
+        ticket, change difficulty, forfeit loot, purchase rare items, etc.)."""
+        n = (name or '').strip().lower()
+        if not n:
+            return True
+        if n in self.NOISE_EXACT:
+            return True
+        if n.startswith(self.NOISE_PREFIXES):
+            return True
+        if any(tok in n for tok in self.NOISE_CONTAINS):
+            return True
+        return False
     
     def parse_replay(self, file_path):
         """Send replay file to parser and get loot information"""
@@ -144,15 +166,37 @@ class ReplayRenamer:
         # If no known prefix found, just return what we have (fallback)
         return base if base else class_name.lower()
     
+    def _get_hero_class(self, parsed_data, player_name):
+        """Class derived from the hero the player actually used in-game.
+
+        Reads playerData[].hero.heroClass (the parser maps the replay's hero
+        unit to its class via heros.json). Returns a clean class name or None.
+        """
+        target = (player_name or '').lower().strip()
+        for player in parsed_data.get('playerData', []):
+            pn = (player.get('playerName') or '').lower()
+            cn = re.sub(r'\([^)]*\)', '', (player.get('convertedName') or '')).strip().lower()
+            if pn == target or pn.split('#')[0] == target or cn == target:
+                hero = player.get('hero')
+                if isinstance(hero, dict) and hero.get('heroClass'):
+                    return re.sub(r'[<>:"/\\|?*]', '', hero['heroClass']).strip()
+                return None
+        return None
+
     def get_player_class(self, parsed_data, player_name):
         """Extract player class from parsed data
-        Priority: Chat -l/-load/-save commands from crucibles > playerData (with base extraction) > unknown
-        Searches chat history for commands like: crucibles -l merch, crucibles -load am, crucibles -save bm
+        Priority: actual in-game hero class > chat -l/-load/-save commands > playerData > unknown
         """
         if not parsed_data:
             return "unknown"
-        
-        # HIGHEST PRIORITY: Check chat messages for -l, -load, -save commands
+
+        # HIGHEST PRIORITY: the actual hero the player used (from replay action
+        # data) -> its canonical class (e.g. "Arcane Mage").
+        hero_class = self._get_hero_class(parsed_data, player_name)
+        if hero_class:
+            return hero_class
+
+        # NEXT: Check chat messages for -l, -load, -save commands
         # Look for any message containing player_name and a class loading command
         if 'chatData' in parsed_data:
             for chat in parsed_data['chatData']:
@@ -169,16 +213,16 @@ class ReplayRenamer:
                         if len(parts) > 1:
                             class_part = parts[1].split()[0].strip()
                             if class_part and len(class_part) < 20 and class_part not in ['game', 'all']:
-                                return class_part
-                    
+                                return self.extract_base_class(class_part)
+
                     # Check for -load command (e.g., "crucibles -load am" or just "-load am")
                     if '-load ' in message:
                         parts = message.split('-load ')
                         if len(parts) > 1:
                             class_part = parts[1].split()[0].strip()
                             if class_part and len(class_part) < 20 and not any(char.isdigit() for char in class_part):
-                                return class_part
-                    
+                                return self.extract_base_class(class_part)
+
                     # Check for -save command (e.g., "crucibles -save bm" or "-save am/ror")
                     if '-save ' in message:
                         parts = message.split('-save ')
@@ -188,7 +232,7 @@ class ReplayRenamer:
                             if '/' in class_part:
                                 class_part = class_part.split('/')[0].strip()
                             if class_part and len(class_part) < 20 and class_part not in ['game', 'all']:
-                                return class_part
+                                return self.extract_base_class(class_part)
         
         # SECOND PRIORITY: Check playerData (but extract base class from it)
         if 'playerData' in parsed_data:
@@ -196,21 +240,54 @@ class ReplayRenamer:
                 if (player.get('playerName', '').lower() == player_name.lower() or
                     player.get('convertedName', '').lower() == player_name.lower()):
                     # Try to extract class from different possible fields
-                    class_value = None
-                    if 'class' in player:
-                        class_value = player['class']
-                    elif 'hero' in player:
-                        class_value = player['hero']
-                    elif 'race' in player:
-                        class_value = player['race']
-                    
+                    # (hero is handled separately via _get_hero_class, since it's
+                    # now an object, not a string).
+                    class_value = player.get('class') or player.get('race')
+
                     # Extract base class from playerData result (e.g., "am3pgc" -> "am")
                     if class_value:
                         return self.extract_base_class(class_value)
         
         return "unknown"
-    
-    def generate_player_specific_filename(self, parsed_data, player_name, original_file_path):
+
+    def get_canonical_player_name(self, parsed_data, player_name):
+        """Return the player's name exactly as it appears in the replay.
+
+        The user types a search term (e.g. "crucibles"); the replay may store it
+        as "Crucibles" or "crucibles#1234". This resolves the canonical account
+        name from the parsed data so it can be used as the output folder name.
+        Falls back to the searched term if no match is found.
+        """
+        target = (player_name or '').lower().strip()
+        canonical = None
+
+        if parsed_data and 'playerData' in parsed_data:
+            for player in parsed_data['playerData']:
+                pn = (player.get('playerName') or '').strip()
+                cn = (player.get('convertedName') or '').strip()
+                clean_cn = re.sub(r'\([^)]*\)', '', cn).strip()
+                if pn.lower() == target or clean_cn.lower() == target:
+                    canonical = pn or clean_cn
+                    break
+
+        if not canonical and parsed_data and 'loots' in parsed_data:
+            for loot in parsed_data['loots']:
+                raw = loot.get('playerName', '')
+                clean = re.sub(r'#\d+.*', '', raw)
+                clean = re.sub(r'\([^)]*\)', '', clean).strip()
+                if clean.lower() == target:
+                    canonical = clean
+                    break
+
+        if not canonical:
+            canonical = player_name
+
+        # Sanitise so it is safe to use as a folder/file name.
+        canonical = re.sub(r'[<>:"/\\|?*]', '', canonical).strip()
+        return canonical or player_name
+
+    def generate_player_specific_filename(self, parsed_data, player_name, original_file_path,
+                                          display_name=None):
         """Generate filename for specific player: playerName - class - loots - [craft] [MM/YYYY]"""
         if not parsed_data or 'loots' not in parsed_data:
             return None
@@ -219,28 +296,37 @@ class ReplayRenamer:
         if isinstance(original_file_path, str):
             original_file_path = Path(original_file_path)
             
-        # Find all loots for this specific player
-        player_loots = []
+        # Find all loots for this specific player, filtering out noise and
+        # grouping duplicates (two "Prius Gold Coin" -> "Prius Gold Coin x2").
+        from collections import OrderedDict
+        loot_counts = OrderedDict()
         for loot in parsed_data['loots']:
-            loot_player = loot['playerName']
-            
+            loot_player = loot.get('playerName', '')
+
             # Clean and compare player names (handle variations like #numbers and parentheses)
             clean_loot_player = re.sub(r'#\d+.*', '', loot_player)
             clean_loot_player = re.sub(r'\([^)]*\)', '', clean_loot_player).strip()
-            
-            if clean_loot_player.lower() == player_name.lower():
-                item_name = re.sub(r'[<>:"/\\|?*]', '', loot['itemName'])
-                player_loots.append(item_name)
-        
-        if not player_loots:
+
+            if clean_loot_player.lower() != player_name.lower():
+                continue
+            raw_name = loot.get('itemName')
+            if self._is_noise_item(raw_name):
+                continue
+            item_name = re.sub(r'[<>:"/\\|?*]', '', raw_name).strip()
+            if not item_name:
+                continue
+            loot_counts[item_name] = loot_counts.get(item_name, 0) + 1
+
+        if not loot_counts:
             return None
+
+        player_loots = [f"{name} x{count}" if count > 1 else name
+                        for name, count in loot_counts.items()]
             
-        # Get player class
+        # Get player class (get_player_class already normalises chat/field
+        # results and returns the hero class as-is).
         player_class = self.get_player_class(parsed_data, player_name)
-        
-        # Extract base class letters (e.g., "merch18-fc" -> "merch", "th1" -> "th")
-        player_class = self.extract_base_class(player_class)
-        
+
         # Get original filename for craft detection
         original_filename = original_file_path.name
         
@@ -269,8 +355,9 @@ class ReplayRenamer:
         if len(loots_str) > max_content_length:
             loots_str = loots_str[:max_content_length] + "..."
         
-        # Build the filename
-        new_filename = f"{player_name} - {player_class} - {loots_str}{craft_suffix}{date_suffix}.w3g"
+        # Build the filename (use the replay's real player name when provided)
+        name_prefix = display_name or player_name
+        new_filename = f"{name_prefix} - {player_class} - {loots_str}{craft_suffix}{date_suffix}.w3g"
         
         # Final cleanup for any invalid characters
         new_filename = re.sub(r'[<>:"/\\|?*]', '', new_filename)
@@ -366,13 +453,17 @@ class ReplayRenamer:
             print(f"Failed to parse {original_file_path}")
             return False
             
+        # Resolve the player's real name from the replay for the folder/file name
+        canonical_name = self.get_canonical_player_name(parsed_data, player_name)
+
         # Generate new filename
-        new_name = self.generate_player_specific_filename(parsed_data, player_name, original_file_path)
-        
+        new_name = self.generate_player_specific_filename(
+            parsed_data, player_name, original_file_path, display_name=canonical_name)
+
         if not new_name:
             print(f"No loots found for player '{player_name}' in {original_file_path.name}")
             return False
-            
+
         # Extract player class from the filename
         # Format: playerName - class - loots.w3g
         parts = new_name.split(' - ')
@@ -380,9 +471,9 @@ class ReplayRenamer:
             player_class = parts[1]
         else:
             player_class = "unknown"
-        
-        # Create organized folder structure: player_name/class/
-        output_path = Path(base_output_folder) / player_name / player_class
+
+        # Create organized folder structure: <replay player name>/class/
+        output_path = Path(base_output_folder) / canonical_name / player_class
         
         if not output_path.exists():
             if dry_run:
@@ -400,12 +491,12 @@ class ReplayRenamer:
             
         try:
             if dry_run:
-                print(f"DRY RUN: Would copy '{original_file_path.name}' to '{player_name}/{player_class}/{new_name}'")
+                print(f"DRY RUN: Would copy '{original_file_path.name}' to '{canonical_name}/{player_class}/{new_name}'")
                 return True
             else:
                 # Copy the original file to the new location with new name
                 shutil.copy2(original_file_path, new_file_path)
-                print(f"Copied to '{player_name}/{player_class}/{new_name}'")
+                print(f"Copied to '{canonical_name}/{player_class}/{new_name}'")
                 return True
         except Exception as e:
             print(f"Error creating file: {e}")

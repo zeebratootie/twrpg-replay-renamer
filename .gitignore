@@ -9,8 +9,16 @@ __pycache__/
 *$py.class
 *.so
 
-# User settings
+# User settings & personal configs
 settings.json
+*.ini
+
+# Large binaries / bundled parser executable
+*.exe
+replay-parser-win-x64.exe
+
+# Runtime uploads
+uploads/
 
 # Virtual environment
 venv/

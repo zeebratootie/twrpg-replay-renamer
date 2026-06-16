@@ -43,6 +43,8 @@ CLASS_DISPLAY_NAMES = {
     'witch': 'Witch',
     'sniper': 'Sniper',
     'priest': 'Priest',
+    'rp': 'Reaper',
+    'reaper': 'Reaper',
 }
 
 class ReplayRenamer:
@@ -217,28 +219,44 @@ class ReplayRenamer:
 
     def get_player_class(self, parsed_data, player_name):
         """Extract player class from parsed data
-        Priority: actual in-game hero class > chat -l/-load/-save commands > playerData > unknown
+        Priority: actual in-game hero class > playerData > chat -l/-load/-save commands > unknown
         """
         if not parsed_data:
             return "unknown"
 
-        # HIGHEST PRIORITY: the actual hero the player used (from replay action
-        # data) -> its canonical class (e.g. "Arcane Mage").
+        # HIGHEST PRIORITY: the actual hero the player used in-game, from the
+        # replay's action data (the parser identifies it as the first hero the
+        # player controls after their starting footman) -> its canonical class
+        # (e.g. "Arcane Mage"). This is the most reliable signal.
         hero_class = self._get_hero_class(parsed_data, player_name)
         if hero_class:
             return hero_class
 
-        # NEXT: Check chat messages for -l, -load, -save commands
-        # Look for any message containing player_name and a class loading command
+        # NEXT PRIORITY: Check playerData (but extract base class from it)
+        if 'playerData' in parsed_data:
+            for player in parsed_data['playerData']:
+                if (player.get('playerName', '').lower() == player_name.lower() or
+                    player.get('convertedName', '').lower() == player_name.lower()):
+                    # Try to extract class from different possible fields
+                    # (hero is handled separately via _get_hero_class, since it's
+                    # now an object, not a string).
+                    class_value = player.get('class') or player.get('race')
+
+                    # Extract base class from playerData result (e.g., "am3pgc" -> "am")
+                    if class_value:
+                        return self.extract_base_class(class_value)
+
+        # LAST RESORT: the player's own -l / -load / -save chat declaration. Used
+        # only when the reliable in-game data above could not identify the hero.
         if 'chatData' in parsed_data:
             for chat in parsed_data['chatData']:
                 chat_player = chat.get('player', '').lower()
                 message = chat.get('message', '').lower()
-                
-                # Check if this chat message is from crucibles (exact match or starts with)
+
+                # Check if this chat message is from the player (exact or name#tag)
                 if chat_player == player_name.lower() or chat_player.startswith(player_name.lower() + '#'):
                     # Priority order: -l > -load > -save
-                    
+
                     # Check for -l command (e.g., "crucibles -l merch" or just "-l merch")
                     if '-l ' in message:
                         parts = message.split('-l ')
@@ -265,21 +283,7 @@ class ReplayRenamer:
                                 class_part = class_part.split('/')[0].strip()
                             if class_part and len(class_part) < 20 and class_part not in ['game', 'all']:
                                 return self.extract_base_class(class_part)
-        
-        # SECOND PRIORITY: Check playerData (but extract base class from it)
-        if 'playerData' in parsed_data:
-            for player in parsed_data['playerData']:
-                if (player.get('playerName', '').lower() == player_name.lower() or
-                    player.get('convertedName', '').lower() == player_name.lower()):
-                    # Try to extract class from different possible fields
-                    # (hero is handled separately via _get_hero_class, since it's
-                    # now an object, not a string).
-                    class_value = player.get('class') or player.get('race')
 
-                    # Extract base class from playerData result (e.g., "am3pgc" -> "am")
-                    if class_value:
-                        return self.extract_base_class(class_value)
-        
         return "unknown"
 
     def get_canonical_player_name(self, parsed_data, player_name):

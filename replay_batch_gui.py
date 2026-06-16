@@ -30,6 +30,8 @@ from config import ConfigManager
 from date_filter import DateFilter
 from logging_setup import setup_logging
 
+__version__ = "2.2.0"
+
 
 # ---------------------------------------------------------------------------
 # Local parser server auto-start
@@ -55,6 +57,11 @@ def _app_base_dir():
 def _default_source_folder():
     """The current user's Warcraft III replay folder, used as the default source."""
     return str(Path.home() / 'Documents' / 'Warcraft III' / 'Replay')
+
+
+def _default_output_folder():
+    """Default place to write sorted replays: Desktop/replay-output."""
+    return str(Path.home() / 'Desktop' / 'replay-output')
 
 
 def _resource_dirs():
@@ -250,6 +257,8 @@ CLASS_DISPLAY_NAMES = {
     'witch': 'Witch',
     'sniper': 'Sniper',
     'priest': 'Priest',
+    'rp': 'Reaper',
+    'reaper': 'Reaper',
 }
 
 class ReplayRenamer:
@@ -360,11 +369,23 @@ class ReplayRenamer:
     def get_player_class(self, parsed_data, player_name):
         if not parsed_data:
             return "unknown"
-        # HIGHEST PRIORITY: the actual hero the player used (from replay action
-        # data). Returned as a clean class name (e.g. "Arcane Mage").
+        # HIGHEST PRIORITY: the actual hero the player used in-game, derived from
+        # the replay's action data (the parser identifies it as the first hero the
+        # player controls after their starting footman). This is the most reliable
+        # signal, so it wins over the chat declaration below.
         hero_class = self._get_hero_class(parsed_data, player_name)
         if hero_class:
             return hero_class
+        # NEXT: playerData class/race from the parser.
+        if 'playerData' in parsed_data:
+            for player in parsed_data['playerData']:
+                if (player.get('playerName', '').lower() == player_name.lower() or
+                        player.get('convertedName', '').lower() == player_name.lower()):
+                    class_value = player.get('class') or player.get('race')
+                    if class_value:
+                        return self.extract_base_class(class_value)
+        # LAST RESORT: the player's own -l / -load / -save chat declaration. Used
+        # only when the reliable in-game data above could not identify the hero.
         if 'chatData' in parsed_data:
             for chat in parsed_data['chatData']:
                 chat_player = chat.get('player', '').lower()
@@ -390,13 +411,6 @@ class ReplayRenamer:
                                 class_part = class_part.split('/')[0].strip()
                             if class_part and len(class_part) < 20 and class_part not in ['game', 'all']:
                                 return self.extract_base_class(class_part)
-        if 'playerData' in parsed_data:
-            for player in parsed_data['playerData']:
-                if (player.get('playerName', '').lower() == player_name.lower() or
-                        player.get('convertedName', '').lower() == player_name.lower()):
-                    class_value = player.get('class') or player.get('race')
-                    if class_value:
-                        return self.extract_base_class(class_value)
         return "unknown"
 
     def get_canonical_player_name(self, parsed_data, player_name):
@@ -625,7 +639,7 @@ class ReplayBatchProcessorGUI:
 
     def __init__(self, root, config_manager: ConfigManager):
         self.root = root
-        self.root.title("Replay Batch Processor")
+        self.root.title(f"Replay Batch Processor v{__version__}")
         self.root.geometry("720x820")
         self.root.minsize(680, 700)
         self.root.resizable(True, True)
@@ -656,6 +670,9 @@ class ReplayBatchProcessorGUI:
         self.setup_ui()
         self.load_settings()
         self._install_autosave_traces()
+
+        # Ask for the player name first thing when there isn't one yet.
+        self.root.after(150, self.prompt_initial_player)
 
     def _configure_styles(self, style):
         """Define the ttk styles used across the app for a cleaner appearance."""
@@ -778,7 +795,7 @@ class ReplayBatchProcessorGUI:
             row=current_row, column=0, columnspan=3, sticky=tk.W, pady=(10, 5))
         current_row += 1
 
-        self.all_dates_var = tk.BooleanVar(value=False)
+        self.all_dates_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(main_frame, text="All dates (process every file, no date filter)",
                         variable=self.all_dates_var,
                         command=self._toggle_date_inputs).grid(
@@ -1309,7 +1326,10 @@ class ReplayBatchProcessorGUI:
                                       parent=self.root)
         if not name or not name.strip():
             return
-        name = name.strip()
+        self._create_player_profile(name.strip())
+
+    def _create_player_profile(self, name):
+        """Create/select a player profile on disk for the given name."""
         safe = re.sub(r'[<>:"/\\|?*]', '', name) or "player"
         path = self._config_dir / f"{safe}.ini"
         try:
@@ -1325,6 +1345,17 @@ class ReplayBatchProcessorGUI:
             logging.error(f"Could not create new player profile: {e}")
             messagebox.showerror("Error", f"Could not create player profile:\n{e}")
 
+    def prompt_initial_player(self):
+        """On startup, ask for the player name first when none is selected yet."""
+        if self.player_name_var.get().strip():
+            return
+        name = simpledialog.askstring(
+            "Player Name",
+            "Enter the player name to sort replays for:",
+            parent=self.root)
+        if name and name.strip():
+            self._create_player_profile(name.strip())
+
     def load_settings(self):
         """Load settings from the active profile (and settings.json for back-compat)."""
         self._loading = True  # suppress auto-save while we populate fields
@@ -1336,7 +1367,15 @@ class ReplayBatchProcessorGUI:
             if not src or src in ('./input', '.\\input'):
                 src = _default_source_folder()
             self.source_folder_var.set(src)
-            self.output_folder_var.set(self.config.get('output_folder', default=''))
+            # Default the output to Desktop/replay-output when unset, and create it.
+            out = (self.config.get('output_folder', default='') or '').strip()
+            if not out or out in ('./output', '.\\output'):
+                out = _default_output_folder()
+            try:
+                Path(out).mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                logging.warning(f"Could not create default output folder '{out}': {e}")
+            self.output_folder_var.set(out)
             self.parser_url_var.set(self.config.get('parser_url', default='http://localhost:3000'))
             self.batch_size_var.set(str(self.config.get_int('batch_size', default=500)))
             self.parallel_threads_var.set(str(self.config.get_int('parallel_threads', default=8)))
@@ -1356,8 +1395,9 @@ class ReplayBatchProcessorGUI:
                 self.date_from_var.set(date_from_config)
                 self.date_to_var.set(date_to_config)
 
-            # "All dates" toggle (disables the date inputs when on)
-            self.all_dates_var.set(self.config.get_bool('all_dates', default=False))
+            # "All dates" toggle (disables the date inputs when on). Defaults ON so
+            # a fresh profile processes every replay regardless of date.
+            self.all_dates_var.set(self.config.get_bool('all_dates', default=True))
             self.recursive_var.set(self.config.get_bool('recursive', default=True))
             self._toggle_date_inputs()
 

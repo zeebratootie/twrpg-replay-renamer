@@ -30,7 +30,7 @@ from config import ConfigManager
 from date_filter import DateFilter
 from logging_setup import setup_logging
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 
 
 # ---------------------------------------------------------------------------

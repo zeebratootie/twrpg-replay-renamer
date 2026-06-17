@@ -225,9 +225,9 @@ class ReplayRenamer:
             return "unknown"
 
         # HIGHEST PRIORITY: the actual hero the player used in-game, from the
-        # replay's action data (the parser identifies it as the first hero the
-        # player controls after their starting footman) -> its canonical class
-        # (e.g. "Arcane Mage"). This is the most reliable signal.
+        # replay's action data (the parser identifies it as the hero the player
+        # commands most often) -> its canonical class (e.g. "Arcane Mage").
+        # This is the most reliable signal.
         hero_class = self._get_hero_class(parsed_data, player_name)
         if hero_class:
             return hero_class

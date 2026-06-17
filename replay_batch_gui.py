@@ -30,7 +30,7 @@ from config import ConfigManager
 from date_filter import DateFilter
 from logging_setup import setup_logging
 
-__version__ = "2.2.1"
+__version__ = "2.2.2"
 
 
 # ---------------------------------------------------------------------------
@@ -370,9 +370,9 @@ class ReplayRenamer:
         if not parsed_data:
             return "unknown"
         # HIGHEST PRIORITY: the actual hero the player used in-game, derived from
-        # the replay's action data (the parser identifies it as the first hero the
-        # player controls after their starting footman). This is the most reliable
-        # signal, so it wins over the chat declaration below.
+        # the replay's action data (the parser identifies it as the hero the player
+        # commands most often). This is the most reliable signal, so it wins over
+        # the chat declaration below.
         hero_class = self._get_hero_class(parsed_data, player_name)
         if hero_class:
             return hero_class

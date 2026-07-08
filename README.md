@@ -29,3 +29,5 @@ Your settings and per-player profiles are saved automatically next to the app, s
 
 - **No `.w3g` files found** — check the Source folder path, and make sure *Search subfolders* is on if your replays are nested.
 - **Something failed mid-run** — read the **Processing Log** at the bottom of the window; it lists each file and any error.
+
+If you encounter any bug or any feature request you can reach out to me at discord too. .crucibles
